@@ -34,8 +34,8 @@ public class MyBot extends TelegramLongPollingBot {
     @Autowired
     private BotService botService;
 
-    private Map<Long, String> userStates = new HashMap<>(); // Track user state
-    private Map<Long, String> userLanguages = new HashMap<>(); // Track user language
+    private Map<Long, String> userStates = new HashMap<>();
+    private Map<Long, String> userLanguages = new HashMap<>();
 
     @Override
     public String getBotUsername() {
@@ -49,66 +49,76 @@ public class MyBot extends TelegramLongPollingBot {
 
     @Override
     public void onUpdateReceived(Update update) {
-        if (update.hasMessage()) {
-            var message = update.getMessage();
-            long chatId = message.getChatId();
+        try {
+            if (update.hasMessage()) {
+                var message = update.getMessage();
+                long chatId = message.getChatId();
 
-            // Handle text commands
-            if (message.hasText()) {
-                String text = message.getText();
-                handleTextMessage(chatId, text);
+                // Text komandalarini boshqarish
+                if (message.hasText()) {
+                    String text = message.getText();
+                    handleTextMessage(chatId, text);
+                }
+                // Ovoz xabarlarini boshqarish
+                else if (message.hasVoice()) {
+                    handleVoiceMessage(chatId, message.getVoice().getFileId());
+                }
             }
-            // Handle voice messages (Audio)
-            else if (message.hasVoice()) {
-                handleVoiceMessage(chatId, message.getVoice().getFileId());
-            }
+        } catch (Exception e) {
+            System.err.println("❌ Error in onUpdateReceived: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     private void handleTextMessage(long chatId, String text) {
-        if (text.equals("/start")) {
-            sendStartMessage(chatId);
-            userStates.put(chatId, "STARTED");
-        } else if (text.equals("/help")) {
-            sendHelpMessage(chatId);
-        } else if (text.equals("📝 Matnga o'tkazish (STT)")) {
-            userStates.put(chatId, "WAITING_FOR_VOICE");
-            sendMessage(chatId, "🎤 Iltimos, ovoz xabarini yuboring yoki /cancel bilan bekor qiling");
-        } else if (text.equals("🎵 Nutqqa o'tkazish (TTS)")) {
-            userStates.put(chatId, "WAITING_FOR_TEXT");
-            sendMessage(chatId, "📝 Iltimos, matni yuboring yoki /cancel bilan bekor qiling");
-        } else if (text.equals("/cancel")) {
-            userStates.put(chatId, "STARTED");
-            sendMessage(chatId, "❌ Operatsiya bekor qilindi. Asosiy menyu:");
-            sendStartMessage(chatId);
-        } else if (userStates.getOrDefault(chatId, "").equals("WAITING_FOR_TEXT")) {
-            // User sent text for TTS conversion
-            handleTextToSpeech(chatId, text);
-        } else {
-            sendMessage(chatId, "❓ Noto'g'ri buyruq. /start bilan boshlang yoki /help ni o'qing");
+        try {
+            if (text.equals("/start")) {
+                sendStartMessage(chatId);
+                userStates.put(chatId, "STARTED");
+            } else if (text.equals("/help")) {
+                sendHelpMessage(chatId);
+            } else if (text.equals("📝 Matnga o'tkazish (STT)")) {
+                userStates.put(chatId, "WAITING_FOR_VOICE");
+                sendMessage(chatId, "🎤 Iltimos, ovoz xabarini yuboring yoki /cancel bilan bekor qiling");
+            } else if (text.equals("🎵 Nutqqa o'tkazish (TTS)")) {
+                userStates.put(chatId, "WAITING_FOR_TEXT");
+                sendMessage(chatId, "📝 Iltimos, matni yuboring yoki /cancel bilan bekor qiling");
+            } else if (text.equals("/cancel")) {
+                userStates.put(chatId, "STARTED");
+                sendMessage(chatId, "❌ Operatsiya bekor qilindi.");
+                sendStartMessage(chatId);
+            } else if (userStates.getOrDefault(chatId, "").equals("WAITING_FOR_TEXT")) {
+                // Matnni TTS ga yuborish
+                handleTextToSpeech(chatId, text);
+            } else {
+                sendMessage(chatId, "❓ Noto'g'ri buyruq. /start bilan boshlang.");
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Error in handleTextMessage: " + e.getMessage());
+            sendMessage(chatId, "❌ Xato: " + e.getMessage());
         }
     }
 
     private void handleVoiceMessage(long chatId, String fileId) {
-        String state = userStates.getOrDefault(chatId, "");
-
-        if (!state.equals("WAITING_FOR_VOICE")) {
-            sendMessage(chatId, "❌ Avval \"📝 Matnga o'tkazish (STT)\" tugmasini bosing");
-            return;
-        }
-
-        sendMessage(chatId, "⏳ Ovoz qayta ishlanmoqda...\n\n⌛ Iltimos kuting...");
-
         try {
+            String state = userStates.getOrDefault(chatId, "");
+
+            if (!state.equals("WAITING_FOR_VOICE")) {
+                sendMessage(chatId, "❌ Avval \"📝 Matnga o'tkazish (STT)\" tugmasini bosing");
+                return;
+            }
+
+            sendMessage(chatId, "⏳ Ovoz qayta ishlanmoqda...\n\n⌛ Iltimos kuting...");
+
             System.out.println("📥 Voice message received, fileId: " + fileId);
 
-            // Download the voice file properly
+            // Ovoz faylini yuklab olish
             String downloadedFilePath = downloadVoiceFile(fileId);
 
             if (downloadedFilePath != null && !downloadedFilePath.isEmpty()) {
                 System.out.println("✅ File downloaded to: " + downloadedFilePath);
 
-                // Convert voice to text using the service
+                // Ovozni matnga o'tkazish
                 SttResponse response = botService.convertVoiceToText(downloadedFilePath);
 
                 if (response != null && response.getText() != null && !response.getText().isEmpty()) {
@@ -118,78 +128,95 @@ public class MyBot extends TelegramLongPollingBot {
                     System.err.println("❌ STT Response is empty or null");
                     sendMessage(chatId, "❌ Ovozni qayta ishlashda xato. Iltimos, qayta urinib ko'ring");
                 }
+
+                // Vaqtinchalik faylni o'chirish
+                new File(downloadedFilePath).delete();
             } else {
                 System.err.println("❌ File download failed");
                 sendMessage(chatId, "❌ Faylni yuklashda xato");
             }
+
         } catch (Exception e) {
             System.err.println("❌ Voice processing error: " + e.getMessage());
             e.printStackTrace();
             sendMessage(chatId, "❌ Xato: " + e.getMessage());
+        } finally {
+            // Holat qayta tiklash
+            userStates.put(chatId, "STARTED");
+            try {
+                sendStartMessage(chatId);
+            } catch (Exception e) {
+                System.err.println("Error sending start message: " + e.getMessage());
+            }
         }
-
-        // Reset state
-        userStates.put(chatId, "STARTED");
-        sendStartMessage(chatId);
     }
 
     private void handleTextToSpeech(long chatId, String text) {
-        if (text.length() < 2) {
-            sendMessage(chatId, "❌ Matn juda qisqa. Kamida 2 ta belgi kiriting");
-            return;
-        }
-
-        if (text.length() > 1000) {
-            sendMessage(chatId, "❌ Matn juda uzun. Maksimal 1000 ta belgi");
-            return;
-        }
-
-        sendMessage(chatId, "⏳ Audio yaratilmoqda...\n\n⌛ Iltimos kutib turun (bu 1-2 daqiqa vaqt olishi mumkin)");
-
         try {
-            // Create TTS request
+            if (text.length() < 2) {
+                sendMessage(chatId, "❌ Matn juda qisqa. Kamida 2 ta belgi kiriting");
+                return;
+            }
+
+            if (text.length() > 1000) {
+                sendMessage(chatId, "❌ Matn juda uzun. Maksimal 1000 ta belgi");
+                return;
+            }
+
+            sendMessage(chatId, "⏳ Audio yaratilmoqda...\n\n⌛ Iltimos kutib turun (bu 1-2 daqiqa vaqt olishi mumkin)");
+
+            // TTS soʻrovi yaratish
             TtsRequest ttsRequest = new TtsRequest();
             ttsRequest.setText(text);
-            ttsRequest.setModel("lola"); // Default model
+            ttsRequest.setModel("lola");
             ttsRequest.setBlocking(true);
 
-            // Convert text to speech
+            System.out.println("🔊 Converting text to speech: " + text);
+
+            // Matni nutqqa aylantirish
             String audioUrl = botService.convertTextToSpeech(ttsRequest);
 
-            if (audioUrl != null && !audioUrl.isEmpty()) {
+            if (audioUrl != null && !audioUrl.isEmpty() && !audioUrl.equals("PROCESSING")) {
                 sendMessage(chatId, "✅ Audio tayyor! Yuborish boshlandi...");
-                // Send audio to user
+                // Audioing foydalanuvchiga yuborish
                 sendAudio(chatId, audioUrl, text);
+            } else if (audioUrl != null && audioUrl.equals("PROCESSING")) {
+                sendMessage(chatId, "⏳ Audio yaratilmoqda...\n\nBiroz vaqt o'tgach qayta tekshiring yoki /cancel bilan bekor qiling");
             } else {
-                sendMessage(chatId, "❌ Audioyu yaratishda xato. Iltimos, qayta urinib ko'ring");
+                sendMessage(chatId, "❌ Audio yaratishda xato. Iltimos, qayta urinib ko'ring");
             }
         } catch (Exception e) {
             System.err.println("❌ TTS error: " + e.getMessage());
+            e.printStackTrace();
             String errorMsg = e.getMessage();
-            if (errorMsg.contains("vaqti tugadi")) {
-                sendMessage(chatId, "⏰ Audio yaratish vaqti tugadi.\n\nMatni qisqartib urinib ko'ring yoki /cancel bilan bekor qiling");
+            if (errorMsg != null && errorMsg.contains("vaqti tugadi")) {
+                sendMessage(chatId, "⏰ Audio yaratish vaqti tugadi.\n\nMatni qisqartib urinib ko'ring");
             } else {
                 sendMessage(chatId, "❌ Xato: " + errorMsg);
             }
+        } finally {
+            // Holat qayta tiklash
+            userStates.put(chatId, "STARTED");
+            try {
+                sendStartMessage(chatId);
+            } catch (Exception e) {
+                System.err.println("Error sending start message: " + e.getMessage());
+            }
         }
-
-        // Reset state
-        userStates.put(chatId, "STARTED");
-        sendStartMessage(chatId);
     }
 
     private void sendStartMessage(long chatId) {
-        SendMessage message = new SendMessage();
-        message.setChatId(chatId);
-        message.setText("👋 Assalomu aleykum! Men TTS/STT botiman.\n\n" +
-                "📌 Menga matn yuborsangiz, unga audio qilib qaytaraman\n" +
-                "🎤 Menga ovoz yuborsangiz, matnga o'tkazilib qaytaraman\n\n" +
-                "Quyidagi tugmalarni tanlang:");
-
-        ReplyKeyboardMarkup keyboardMarkup = getMainKeyboard();
-        message.setReplyMarkup(keyboardMarkup);
-
         try {
+            SendMessage message = new SendMessage();
+            message.setChatId(chatId);
+            message.setText("👋 Assalomu aleykum! Men TTS/STT botiman.\n\n" +
+                    "📌 Menga matn yuborsangiz, unga audio qilib qaytaraman\n" +
+                    "🎤 Menga ovoz yuborsangiz, matnga o'tkazilib qaytaraman\n\n" +
+                    "Quyidagi tugmalarni tanlang:");
+
+            ReplyKeyboardMarkup keyboardMarkup = getMainKeyboard();
+            message.setReplyMarkup(keyboardMarkup);
+
             execute(message);
         } catch (TelegramApiException e) {
             System.err.println("❌ SendMessage error: " + e.getMessage());
@@ -197,31 +224,34 @@ public class MyBot extends TelegramLongPollingBot {
     }
 
     private void sendHelpMessage(long chatId) {
-        String helpText = "🆘 Yordam:\n\n" +
-                "/start - Botni qayta boshlash\n" +
-                "/help - Bu habar\n" +
-                "/cancel - Joriy operatsiyani bekor qilish\n\n" +
-                "📝 Matnga o'tkazish (STT):\n" +
-                "1. \"📝 Matnga o'tkazish (STT)\" tugmasini bosing\n" +
-                "2. Ovoz xabarini yuboring\n" +
-                "3. Bot sizga matni qaytaradi\n\n" +
-                "🎵 Nutqqa o'tkazish (TTS):\n" +
-                "1. \"🎵 Nutqqa o'tkazish (TTS)\" tugmasini bosing\n" +
-                "2. Matnni yuboring\n" +
-                "3. Bot sizga audio qaytaradi (1-2 daqiqa kutib turish mumkin)\n\n" +
-                "⚠️ Chegaralar:\n" +
-                "- Matn: 2-1000 belgi\n" +
-                "- Ovoz: Maksimal 50 MB\n" +
-                "- Audio yaratish: Maksimal 2 minut";
-        sendMessage(chatId, helpText);
+        try {
+            String helpText = "🆘 Yordam:\n\n" +
+                    "/start - Botni qayta boshlash\n" +
+                    "/help - Bu habar\n" +
+                    "/cancel - Joriy operatsiyani bekor qilish\n\n" +
+                    "📝 Matnga o'tkazish (STT):\n" +
+                    "1. \"📝 Matnga o'tkazish (STT)\" tugmasini bosing\n" +
+                    "2. Ovoz xabarini yuboring\n" +
+                    "3. Bot sizga matni qaytaradi\n\n" +
+                    "🎵 Nutqqa o'tkazish (TTS):\n" +
+                    "1. \"🎵 Nutqqa o'tkazish (TTS)\" tugmasini bosing\n" +
+                    "2. Matnni yuboring\n" +
+                    "3. Bot sizga audio qaytaradi\n\n" +
+                    "⚠️ Chegaralar:\n" +
+                    "- Matn: 2-1000 belgi\n" +
+                    "- Ovoz: Maksimal 50 MB\n" +
+                    "- Audio yaratish: Maksimal 2 minut";
+            sendMessage(chatId, helpText);
+        } catch (Exception e) {
+            System.err.println("Error sending help message: " + e.getMessage());
+        }
     }
 
     private void sendMessage(long chatId, String text) {
-        SendMessage message = new SendMessage();
-        message.setChatId(chatId);
-        message.setText(text);
-
         try {
+            SendMessage message = new SendMessage();
+            message.setChatId(chatId);
+            message.setText(text);
             execute(message);
         } catch (TelegramApiException e) {
             System.err.println("❌ SendMessage error: " + e.getMessage());
@@ -229,13 +259,13 @@ public class MyBot extends TelegramLongPollingBot {
     }
 
     private void sendAudio(long chatId, String audioUrl, String caption) {
-        SendAudio audio = new SendAudio();
-        audio.setChatId(chatId);
-        audio.setAudio(new InputFile(audioUrl));
-        String shortCaption = caption.length() > 100 ? caption.substring(0, 100) + "..." : caption;
-        audio.setCaption("🎵 Matn: " + shortCaption);
-
         try {
+            SendAudio audio = new SendAudio();
+            audio.setChatId(chatId);
+            audio.setAudio(new InputFile(audioUrl));
+            String shortCaption = caption.length() > 100 ? caption.substring(0, 100) + "..." : caption;
+            audio.setCaption("🎵 Matn: " + shortCaption);
+
             execute(audio);
         } catch (TelegramApiException e) {
             System.err.println("❌ SendAudio error: " + e.getMessage());
@@ -256,13 +286,13 @@ public class MyBot extends TelegramLongPollingBot {
             String fileUrl = "https://api.telegram.org/file/bot" + getBotToken() + "/" + filePath;
             System.out.println("🔗 Download URL: " + fileUrl);
 
-            // Download file
+            // Faylni yuklash
             URL url = new URL(fileUrl);
             URLConnection connection = url.openConnection();
             InputStream inputStream = connection.getInputStream();
 
-            // Save to temporary file with .ogg extension
-            String tempPath = System.getProperty("java.io.tmpdir") + "/" + System.currentTimeMillis() + ".ogg";
+            // Vaqtinchalik faylga saqlash (.ogg format)
+            String tempPath = System.getProperty("java.io.tmpdir") + File.separator + System.currentTimeMillis() + ".ogg";
             FileOutputStream outputStream = new FileOutputStream(tempPath);
 
             byte[] buffer = new byte[4096];
