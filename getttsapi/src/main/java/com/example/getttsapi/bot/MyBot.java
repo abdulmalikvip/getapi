@@ -34,7 +34,6 @@ public class MyBot extends TelegramLongPollingBot {
     private BotService botService;
 
     private Map<Long, String> userStates = new HashMap<>();
-    private Map<Long, String> userLanguages = new HashMap<>();
 
     @Override
     public String getBotUsername() {
@@ -60,6 +59,7 @@ public class MyBot extends TelegramLongPollingBot {
                 }
                 // Ovoz xabarlarini boshqarish
                 else if (message.hasVoice()) {
+                    System.out.println("🎤 VOICE MESSAGE RECEIVED");
                     handleVoiceMessage(chatId, message.getVoice().getFileId());
                 }
             }
@@ -71,6 +71,8 @@ public class MyBot extends TelegramLongPollingBot {
 
     private void handleTextMessage(long chatId, String text) {
         try {
+            System.out.println("📝 TEXT MESSAGE: " + text);
+
             if (text.equals("/start")) {
                 sendStartMessage(chatId);
                 userStates.put(chatId, "STARTED");
@@ -78,22 +80,22 @@ public class MyBot extends TelegramLongPollingBot {
                 sendHelpMessage(chatId);
             } else if (text.equals("📝 Matnga o'tkazish (STT)")) {
                 userStates.put(chatId, "WAITING_FOR_VOICE");
-                sendMessage(chatId, "🎤 Iltimos, ovoz xabarini yuboring yoki /cancel bilan bekor qiling");
+                sendMessage(chatId, "🎤 Iltimos, ovoz xabarini yuboring...");
             } else if (text.equals("🎵 Nutqqa o'tkazish (TTS)")) {
                 userStates.put(chatId, "WAITING_FOR_TEXT");
-                sendMessage(chatId, "📝 Iltimos, matni yuboring yoki /cancel bilan bekor qiling");
+                sendMessage(chatId, "📝 Iltimos, matnni yuboring...");
             } else if (text.equals("/cancel")) {
                 userStates.put(chatId, "STARTED");
-                sendMessage(chatId, "❌ Operatsiya bekor qilindi.");
                 sendStartMessage(chatId);
             } else if (userStates.getOrDefault(chatId, "").equals("WAITING_FOR_TEXT")) {
-                // Matnni TTS ga yuborish
+                System.out.println("🔊 TTS REQUEST: " + text);
                 handleTextToSpeech(chatId, text);
             } else {
-                sendMessage(chatId, "❓ Noto'g'ri buyruq. /start bilan boshlang.");
+                sendMessage(chatId, "❓ /start bilan boshlang");
             }
         } catch (Exception e) {
             System.err.println("❌ Error in handleTextMessage: " + e.getMessage());
+            e.printStackTrace();
             sendMessage(chatId, "❌ Xato: " + e.getMessage());
         }
     }
@@ -101,41 +103,47 @@ public class MyBot extends TelegramLongPollingBot {
     private void handleVoiceMessage(long chatId, String fileId) {
         try {
             String state = userStates.getOrDefault(chatId, "");
+            System.out.println("🎤 Voice state: " + state);
 
             if (!state.equals("WAITING_FOR_VOICE")) {
-                sendMessage(chatId, "❌ Avval \"📝 Matnga o'tkazish (STT)\" tugmasini bosing");
+                sendMessage(chatId, "❌ Avval STT tugmasini bosing");
                 return;
             }
 
-            sendMessage(chatId, "⏳ Ovoz qayta ishlanmoqda...\n\n⌛ Iltimos kuting...");
+            sendMessage(chatId, "⏳ Qayta ishlanmoqda...");
 
-            System.out.println("📥 Voice message received, fileId: " + fileId);
-
-            // Ovoz faylini yuklab olish
+            System.out.println("📥 Downloading voice file: " + fileId);
             String downloadedFilePath = downloadVoiceFile(fileId);
 
-            if (downloadedFilePath != null && !downloadedFilePath.isEmpty()) {
-                System.out.println("✅ File downloaded to: " + downloadedFilePath);
+            if (downloadedFilePath == null || downloadedFilePath.isEmpty()) {
+                System.err.println("❌ Download failed");
+                sendMessage(chatId, "❌ Faylni yuklashda xato");
+                return;
+            }
 
-                // Ovozni matnga o'tkazish
+            System.out.println("✅ File downloaded: " + downloadedFilePath);
+
+            try {
+                System.out.println("🔌 Calling BotService.convertVoiceToText...");
                 SttResponse response = botService.convertVoiceToText(downloadedFilePath);
 
+                System.out.println("✅ STT Response received: " + (response != null ? response.getText() : "null"));
+
                 if (response != null && response.getText() != null && !response.getText().isEmpty()) {
-                    System.out.println("✅ STT Response text: " + response.getText());
                     sendMessage(chatId, "✅ Natija:\n\n" + response.getText());
                 } else {
-                    System.err.println("❌ STT Response is empty or null");
-                    sendMessage(chatId, "❌ Ovozni qayta ishlashda xato. Iltimos, qayta urinib ko'ring");
+                    sendMessage(chatId, "❌ Javob bo'sh. API xatosi.");
                 }
+            } catch (Exception e) {
+                System.err.println("❌ BotService error: " + e.getMessage());
+                e.printStackTrace();
+                sendMessage(chatId, "❌ STT xatosi: " + e.getMessage());
+            }
 
-                // Vaqtinchalik faylni o'chirish
-                java.io.File tempFile = new java.io.File(downloadedFilePath);
-                if (tempFile.exists()) {
-                    tempFile.delete();
-                }
-            } else {
-                System.err.println("❌ File download failed");
-                sendMessage(chatId, "❌ Faylni yuklashda xato");
+            // Faylni o'chirish
+            java.io.File tempFile = new java.io.File(downloadedFilePath);
+            if (tempFile.exists()) {
+                tempFile.delete();
             }
 
         } catch (Exception e) {
@@ -143,66 +151,66 @@ public class MyBot extends TelegramLongPollingBot {
             e.printStackTrace();
             sendMessage(chatId, "❌ Xato: " + e.getMessage());
         } finally {
-            // Holat qayta tiklash
             userStates.put(chatId, "STARTED");
             try {
                 sendStartMessage(chatId);
             } catch (Exception e) {
-                System.err.println("Error sending start message: " + e.getMessage());
+                e.printStackTrace();
             }
         }
     }
 
     private void handleTextToSpeech(long chatId, String text) {
         try {
+            System.out.println("🎵 TTS REQUEST STARTED: " + text);
+
             if (text.length() < 2) {
-                sendMessage(chatId, "❌ Matn juda qisqa. Kamida 2 ta belgi kiriting");
+                sendMessage(chatId, "❌ Matn qisqa");
                 return;
             }
 
             if (text.length() > 1000) {
-                sendMessage(chatId, "❌ Matn juda uzun. Maksimal 1000 ta belgi");
+                sendMessage(chatId, "❌ Matn juda uzun (max 1000)");
                 return;
             }
 
-            sendMessage(chatId, "⏳ Audio yaratilmoqda...\n\n⌛ Iltimos kutib turun (bu 1-2 daqiqa vaqt olishi mumkin)");
+            sendMessage(chatId, "⏳ Audio yaratilmoqda... Iltimos kuting");
 
-            // TTS soʻrovi yaratish
             TtsRequest ttsRequest = new TtsRequest();
             ttsRequest.setText(text);
             ttsRequest.setModel("lola");
             ttsRequest.setBlocking(true);
 
-            System.out.println("🔊 Converting text to speech: " + text);
+            try {
+                System.out.println("🔌 Calling BotService.convertTextToSpeech...");
+                String audioUrl = botService.convertTextToSpeech(ttsRequest);
 
-            // Matni nutqqa aylantirish
-            String audioUrl = botService.convertTextToSpeech(ttsRequest);
+                System.out.println("✅ TTS Response: " + audioUrl);
 
-            if (audioUrl != null && !audioUrl.isEmpty() && !audioUrl.equals("PROCESSING")) {
-                sendMessage(chatId, "✅ Audio tayyor! Yuborish boshlandi...");
-                // Audioing foydalanuvchiga yuborish
-                sendAudio(chatId, audioUrl, text);
-            } else if (audioUrl != null && audioUrl.equals("PROCESSING")) {
-                sendMessage(chatId, "⏳ Audio yaratilmoqda...\n\nBiroz vaqt o'tgach qayta tekshiring yoki /cancel bilan bekor qiling");
-            } else {
-                sendMessage(chatId, "❌ Audio yaratishda xato. Iltimos, qayta urinib ko'ring");
+                if (audioUrl != null && !audioUrl.isEmpty()) {
+                    System.out.println("📤 Sending audio to Telegram...");
+                    sendAudio(chatId, audioUrl, text);
+                    System.out.println("✅ Audio sent");
+                } else {
+                    System.err.println("❌ audioUrl null yoki empty");
+                    sendMessage(chatId, "❌ Audio yaratilmadi");
+                }
+            } catch (Exception e) {
+                System.err.println("❌ BotService TTS error: " + e.getMessage());
+                e.printStackTrace();
+                sendMessage(chatId, "❌ TTS xatosi: " + e.getMessage());
             }
+
         } catch (Exception e) {
             System.err.println("❌ TTS error: " + e.getMessage());
             e.printStackTrace();
-            String errorMsg = e.getMessage();
-            if (errorMsg != null && errorMsg.contains("vaqti tugadi")) {
-                sendMessage(chatId, "⏰ Audio yaratish vaqti tugadi.\n\nMatni qisqartib urinib ko'ring");
-            } else {
-                sendMessage(chatId, "❌ Xato: " + errorMsg);
-            }
+            sendMessage(chatId, "❌ Xato: " + e.getMessage());
         } finally {
-            // Holat qayta tiklash
             userStates.put(chatId, "STARTED");
             try {
                 sendStartMessage(chatId);
             } catch (Exception e) {
-                System.err.println("Error sending start message: " + e.getMessage());
+                e.printStackTrace();
             }
         }
     }
@@ -211,10 +219,9 @@ public class MyBot extends TelegramLongPollingBot {
         try {
             SendMessage message = new SendMessage();
             message.setChatId(chatId);
-            message.setText("👋 Assalomu aleykum! Men TTS/STT botiman.\n\n" +
-                    "📌 Menga matn yuborsangiz, unga audio qilib qaytaraman\n" +
-                    "🎤 Menga ovoz yuborsangiz, matnga o'tkazilib qaytaraman\n\n" +
-                    "Quyidagi tugmalarni tanlang:");
+            message.setText("👋 Assalomu aleykum! TTS/STT botiman.\n\n" +
+                    "📌 Matn → Audio\n" +
+                    "🎤 Ovoz → Matn");
 
             ReplyKeyboardMarkup keyboardMarkup = getMainKeyboard();
             message.setReplyMarkup(keyboardMarkup);
@@ -227,25 +234,15 @@ public class MyBot extends TelegramLongPollingBot {
 
     private void sendHelpMessage(long chatId) {
         try {
-            String helpText = "🆘 Yordam:\n\n" +
-                    "/start - Botni qayta boshlash\n" +
-                    "/help - Bu habar\n" +
-                    "/cancel - Joriy operatsiyani bekor qilish\n\n" +
-                    "📝 Matnga o'tkazish (STT):\n" +
-                    "1. \"📝 Matnga o'tkazish (STT)\" tugmasini bosing\n" +
-                    "2. Ovoz xabarini yuboring\n" +
-                    "3. Bot sizga matni qaytaradi\n\n" +
-                    "🎵 Nutqqa o'tkazish (TTS):\n" +
-                    "1. \"🎵 Nutqqa o'tkazish (TTS)\" tugmasini bosing\n" +
-                    "2. Matnni yuboring\n" +
-                    "3. Bot sizga audio qaytaradi\n\n" +
-                    "⚠️ Chegaralar:\n" +
-                    "- Matn: 2-1000 belgi\n" +
-                    "- Ovoz: Maksimal 50 MB\n" +
-                    "- Audio yaratish: Maksimal 2 minut";
+            String helpText = "ℹ️ Botni ishlatish:\n\n" +
+                    "1️⃣ STT: Tugma bosing → Ovoz yuborish\n" +
+                    "2️⃣ TTS: Tugma bosing → Matn yuborish\n\n" +
+                    "Chegaralar:\n" +
+                    "• Matn: 2-1000 belgi\n" +
+                    "• Audio: 50MB gacha";
             sendMessage(chatId, helpText);
         } catch (Exception e) {
-            System.err.println("Error sending help message: " + e.getMessage());
+            System.err.println("Error sending help: " + e.getMessage());
         }
     }
 
@@ -262,38 +259,39 @@ public class MyBot extends TelegramLongPollingBot {
 
     private void sendAudio(long chatId, String audioUrl, String caption) {
         try {
+            System.out.println("📤 Sending audio: " + audioUrl);
             SendAudio audio = new SendAudio();
             audio.setChatId(chatId);
             audio.setAudio(new InputFile(audioUrl));
-            String shortCaption = caption.length() > 100 ? caption.substring(0, 100) + "..." : caption;
-            audio.setCaption("🎵 Matn: " + shortCaption);
+            String shortCaption = caption.length() > 50 ? caption.substring(0, 50) + "..." : caption;
+            audio.setCaption("🎵 " + shortCaption);
 
             execute(audio);
+            System.out.println("✅ Audio sent successfully");
         } catch (TelegramApiException e) {
             System.err.println("❌ SendAudio error: " + e.getMessage());
+            e.printStackTrace();
             sendMessage(chatId, "❌ Audio yuborish xatosi: " + e.getMessage());
         }
     }
 
     private String downloadVoiceFile(String fileId) {
         try {
-            System.out.println("📥 Starting file download...");
+            System.out.println("📥 Starting download for fileId: " + fileId);
             GetFile getFileMethod = new GetFile();
             getFileMethod.setFileId(fileId);
 
             org.telegram.telegrambots.meta.api.objects.File telegramFile = execute(getFileMethod);
             String filePath = telegramFile.getFilePath();
-            System.out.println("📂 Telegram file path: " + filePath);
+            System.out.println("📂 Telegram path: " + filePath);
 
             String fileUrl = "https://api.telegram.org/file/bot" + getBotToken() + "/" + filePath;
             System.out.println("🔗 Download URL: " + fileUrl);
 
-            // Faylni yuklash
             URL url = new URL(fileUrl);
             URLConnection connection = url.openConnection();
             InputStream inputStream = connection.getInputStream();
 
-            // Vaqtinchalik faylga saqlash (.ogg format)
             String tempPath = System.getProperty("java.io.tmpdir") + java.io.File.separator + System.currentTimeMillis() + ".ogg";
             FileOutputStream outputStream = new FileOutputStream(tempPath);
 
@@ -308,10 +306,7 @@ public class MyBot extends TelegramLongPollingBot {
             inputStream.close();
 
             java.io.File tempFile = new java.io.File(tempPath);
-            System.out.println("✅ Voice file downloaded successfully!");
-            System.out.println("📁 Path: " + tempPath);
-            System.out.println("📊 Size: " + totalBytes + " bytes");
-            System.out.println("✔️ File exists: " + tempFile.exists());
+            System.out.println("✅ Downloaded: " + tempPath + " (" + totalBytes + " bytes)");
 
             return tempPath;
         } catch (Exception e) {
