@@ -7,7 +7,6 @@ import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.methods.send.SendAudio;
-import org.telegram.telegrambots.meta.api.objects.File;
 import org.telegram.telegrambots.meta.api.objects.InputFile;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
@@ -130,7 +129,10 @@ public class MyBot extends TelegramLongPollingBot {
                 }
 
                 // Vaqtinchalik faylni o'chirish
-                new File(downloadedFilePath).delete();
+                java.io.File tempFile = new java.io.File(downloadedFilePath);
+                if (tempFile.exists()) {
+                    tempFile.delete();
+                }
             } else {
                 System.err.println("❌ File download failed");
                 sendMessage(chatId, "❌ Faylni yuklashda xato");
@@ -279,8 +281,8 @@ public class MyBot extends TelegramLongPollingBot {
             GetFile getFileMethod = new GetFile();
             getFileMethod.setFileId(fileId);
 
-            File file = execute(getFileMethod);
-            String filePath = file.getFilePath();
+            org.telegram.telegrambots.meta.api.objects.File telegramFile = execute(getFileMethod);
+            String filePath = telegramFile.getFilePath();
             System.out.println("📂 Telegram file path: " + filePath);
 
             String fileUrl = "https://api.telegram.org/file/bot" + getBotToken() + "/" + filePath;
@@ -292,7 +294,7 @@ public class MyBot extends TelegramLongPollingBot {
             InputStream inputStream = connection.getInputStream();
 
             // Vaqtinchalik faylga saqlash (.ogg format)
-            String tempPath = System.getProperty("java.io.tmpdir") + File.separator + System.currentTimeMillis() + ".ogg";
+            String tempPath = System.getProperty("java.io.tmpdir") + java.io.File.separator + System.currentTimeMillis() + ".ogg";
             FileOutputStream outputStream = new FileOutputStream(tempPath);
 
             byte[] buffer = new byte[4096];
