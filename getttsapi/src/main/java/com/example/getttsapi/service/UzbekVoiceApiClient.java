@@ -24,7 +24,7 @@ public class UzbekVoiceApiClient {
     private String apiUrl;
 
     /**
-     * Speech to Text - Nutqni matga aylantirish (STT)
+     * Nutqni matga aylantirish (STT - Speech To Text)
      */
     public JsonObject speechToText(String filePath, String language, String model,
                                    boolean returnOffsets, boolean blocking) {
@@ -41,6 +41,13 @@ public class UzbekVoiceApiClient {
             uploadFile.setHeader("Authorization", apiKey);
 
             File file = new File(filePath);
+
+            if (!file.exists()) {
+                JsonObject error = new JsonObject();
+                error.addProperty("error", "File not found");
+                error.addProperty("path", filePath);
+                return error;
+            }
 
             MultipartEntityBuilder builder = MultipartEntityBuilder.create();
             builder.addBinaryBody("file", file,
@@ -83,7 +90,7 @@ public class UzbekVoiceApiClient {
     }
 
     /**
-     * Text to Speech - Matni nutqqa aylantirish (TTS)
+     * Matni nutqqa aylantirish (TTS - Text To Speech)
      */
     public JsonObject textToSpeechWithModel(String text, String model, boolean blocking) {
         String url = apiUrl + "/tts";
@@ -106,7 +113,7 @@ public class UzbekVoiceApiClient {
 
             System.out.println("📤 Request Body: " + jsonBody.toString());
 
-            // ✅ UTF-8 encoding bilan StringEntity yaratish
+            // UTF-8 encoding bilan StringEntity yaratish
             postRequest.setEntity(new org.apache.http.entity.StringEntity(
                     jsonBody.toString(),
                     StandardCharsets.UTF_8
@@ -122,7 +129,7 @@ public class UzbekVoiceApiClient {
             System.out.println("📥 Response Body: " + responseBody);
             System.out.println("==========================================\n");
 
-            if (statusCode == 200) {
+            if (statusCode == 200 || statusCode == 201) {
                 return JsonParser.parseString(responseBody).getAsJsonObject();
             } else {
                 JsonObject error = new JsonObject();
@@ -144,18 +151,17 @@ public class UzbekVoiceApiClient {
     }
 
     /**
-     * TTS Status tekshirish (Polling uchun)
-     * ✅ TUZATILGAN: ID format yo'l bo'yicha to'g'ri ko'rsatiladi
+     * TTS status tekshirish (Polling uchun)
+     * API dan status tekshirish va agar ready bo'lsa audio URL olish
      */
     public JsonObject checkTtsStatus(String ttsId) {
-        System.out.println("🔄 Raw TTS ID from API: " + ttsId);
+        System.out.println("🔄 Checking TTS status for raw ID: " + ttsId);
 
         // API response ID'da "tts/" prefix bor: tts/UUID/UUID
-        // Status check endpoint: /tts/{id} shaklida FAQAT ID qismi kerak
-        // Agar "tts/" prefix bor bo'lsa, uni kesamiz
+        // Status check endpoint'da faqat UUID/UUID kerak
         String cleanId = ttsId;
         if (ttsId.startsWith("tts/")) {
-            cleanId = ttsId.substring(4); // "tts/" o'rnini kesish -> UUID/UUID
+            cleanId = ttsId.substring(4); // "tts/" kesish
             System.out.println("✂️  Removed 'tts/' prefix");
         }
 
@@ -190,6 +196,7 @@ public class UzbekVoiceApiClient {
 
         } catch (Exception e) {
             System.err.println("❌ Status check error: " + e.getMessage());
+            e.printStackTrace();
             JsonObject error = new JsonObject();
             error.addProperty("error", e.getMessage());
             return error;
