@@ -41,7 +41,7 @@ public class SpeechService {
             }
 
             // Vaqtinchalik fayl saqla
-            String tempFilePath = System.getProperty("java.io.tmpdir") + "/" + System.currentTimeMillis() + ".mp3";
+            String tempFilePath = System.getProperty("java.io.tmpdir") + File.separator + System.currentTimeMillis() + ".mp3";
             File tempFile = new File(tempFilePath);
             audioFile.transferTo(tempFile);
 
@@ -62,6 +62,12 @@ public class SpeechService {
             record.setStatus("SUCCESS");
             record.setCreatedAt(LocalDateTime.now());
             record.setUpdatedAt(LocalDateTime.now());
+
+            // Error tekshirish
+            if (apiResponse.has("error")) {
+                System.err.println("❌ API Error: " + apiResponse.get("error").getAsString());
+                throw new RuntimeException("STT API Error: " + apiResponse.get("error").getAsString());
+            }
 
             String extractedText = "";
             if (apiResponse.has("result") && apiResponse.get("result").isJsonObject()) {
@@ -100,25 +106,31 @@ public class SpeechService {
     }
 
     /**
-     * Save STT record to database (for bot)
+     * STT yozuvni databasega saqlash
      */
     public void saveSTTRecord(String type, String language, String text, String externalId) {
-        SpeechRecord record = new SpeechRecord();
-        record.setType(type);
-        record.setLanguage(language);
-        record.setText(text);
-        record.setExternalId(externalId);
-        record.setStatus("SUCCESS");
-        record.setCreatedAt(LocalDateTime.now());
-        record.setUpdatedAt(LocalDateTime.now());
+        try {
+            SpeechRecord record = new SpeechRecord();
+            record.setType(type);
+            record.setLanguage(language);
+            record.setText(text);
+            record.setExternalId(externalId);
+            record.setStatus("SUCCESS");
+            record.setCreatedAt(LocalDateTime.now());
+            record.setUpdatedAt(LocalDateTime.now());
 
-        speechRepository.save(record);
-        System.out.println("💾 STT Record saved to DB");
+            speechRepository.save(record);
+            System.out.println("💾 STT Record saved to DB");
+        } catch (Exception e) {
+            System.err.println("❌ Error saving STT record: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     /**
-     * Matni nutqqa o'tkazish (TTS) - ASYNC PROCESSING
-     * ✅ POLLING TIMEOUT OCHIRILDI - Async ishlaydi
+     * Matni nutqqa o'tkazish (TTS) - ASYNC MODE
+     * Yoqish rejimi: API soʻrov immediate javob bersa URL olish, 
+     * aks holda async rejimda ID qaytarish
      */
     public TtsResponse convertTextToSpeech(TtsRequest ttsRequest) {
         try {
@@ -145,6 +157,14 @@ public class SpeechService {
             record.setCreatedAt(LocalDateTime.now());
             record.setUpdatedAt(LocalDateTime.now());
 
+            // Error tekshirish
+            if (apiResponse.has("error")) {
+                System.err.println("❌ API Error: " + apiResponse.get("error").getAsString());
+                record.setStatus("FAILED");
+                speechRepository.save(record);
+                throw new RuntimeException("TTS API Error: " + apiResponse.get("error").getAsString());
+            }
+
             String ttsId = null;
             if (apiResponse.has("id")) {
                 ttsId = apiResponse.get("id").getAsString();
@@ -152,7 +172,7 @@ public class SpeechService {
                 System.out.println("📌 TTS ID: " + ttsId);
             }
 
-            // ✅ Agar status "SUCCESS" bo'lsa URL olish
+            // Agar status "SUCCESS" bo'lsa URL olish
             String audioUrl = null;
             if (apiResponse.has("result") && apiResponse.get("result").isJsonObject()) {
                 JsonObject result = apiResponse.get("result").getAsJsonObject();
@@ -162,20 +182,21 @@ public class SpeechService {
                 }
             }
 
-            // ✅ POLLING TIMEOUT OCHIRILDI - ASYNC ISHLAYDI
+            // Agar immediate URL olmasa, async mode
             if (audioUrl == null && ttsId != null) {
-                System.out.println("⏳ Status PROGRESS - Async mode (timeout yo'q)");
-                System.out.println("📌 Client ID sini saqlashi mumkin: " + ttsId);
+                System.out.println("⏳ Status PROGRESS - Async mode (client polling kerak)");
+                System.out.println("📌 TTS ID: " + ttsId);
 
-                // Record sini save qilamiz PROCESSING holati bilan
+                // Record sini PROCESSING holati bilan saqlash
                 speechRepository.save(record);
                 System.out.println("✅ Record saved to DB with PROCESSING status");
                 System.out.println("========== TTS REQUEST QUEUED FOR ASYNC ==========\n");
 
-                // Faqat ID sini qaytaramiz, client keyinroq status tekshirishi mumkin
-                return new TtsResponse(ttsId, "wav", true);
+                // Client ID dan foydalanib status tekshirishi mumkin
+                return new TtsResponse(ttsId, "wav", false); // false = hali ready emas
             }
 
+            // Agar URL bor bo'lsa, complete response qaytarish
             if (audioUrl != null && !audioUrl.isEmpty()) {
                 record.setAudioUrl(audioUrl);
                 record.setStatus("SUCCESS");
@@ -203,7 +224,6 @@ public class SpeechService {
 
     /**
      * TTS status tekshirish
-     * ✅ API'dan status olish va agar ready bo'lsa audio URL olish
      */
     public Map<String, Object> checkTtsStatus(String ttsId) {
         System.out.println("🔍 Checking TTS status for: " + ttsId);
@@ -214,13 +234,19 @@ public class SpeechService {
             // API'dan status tekshirish
             JsonObject statusResponse = uzbekVoiceApiClient.checkTtsStatus(ttsId);
 
+            if (statusResponse.has("error")) {
+                System.err.println("❌ API Error: " + statusResponse.get("error").getAsString());
+                response.put("error", statusResponse.get("error").getAsString());
+                return response;
+            }
+
             if (statusResponse.has("status")) {
                 String status = statusResponse.get("status").getAsString();
                 response.put("status", status);
                 System.out.println("📊 Status: " + status);
 
                 // Agar SUCCESS bo'lsa, audio URL'ni olish
-                if ("SUCCESS".equals(status)) {
+                if ("SUCCESS".equals(status) || "COMPLETED".equals(status)) {
                     if (statusResponse.has("result") && statusResponse.get("result").isJsonObject()) {
                         JsonObject result = statusResponse.get("result").getAsJsonObject();
                         if (result.has("url")) {
